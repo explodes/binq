@@ -8,18 +8,28 @@ import (
 )
 
 const (
+	// MaxKeySize is the largest key size allowed.
+	// Attempting to put a value with a key larger than this size is an error.
 	MaxKeySize = 256
-
-	binqHeaderSize = int(unsafe.Sizeof(binqHeader{}))
-	binqEntrySize  = int(unsafe.Sizeof(binqEntry{}))
 
 	// growBuffer is how much extra to grow the file when new space is required
 	growBuffer = 10 * (binqEntrySize + 1024)
 
-	magic   = uint32(0x514e4942) // ASCII: BINQ, little-endian
+	// magic is a magic number used for file identification.
+	magic = uint32(0x514e4942) // ASCII: BINQ, little-endian
+	// version is the version marker in file, used for upgrading.
 	version = 1
+
+	binqHeaderSize = int(unsafe.Sizeof(binqHeader{}))
+	binqEntrySize  = int(unsafe.Sizeof(binqEntry{}))
 )
 
+var (
+	// ErrNotFound indicates that a key was not found.
+	ErrNotFound = errors.New("not found")
+)
+
+// binqHeader is the struct located at the beginning of a binq file.
 type binqHeader struct {
 	// magic is a unique identifier for binq files
 	magic uint32
@@ -37,18 +47,28 @@ type binqHeader struct {
 	_reserved [128]byte
 }
 
+// binqEntry is an entry in the binq database. Its structure is like that of a linked list.
 type binqEntry struct {
-	key     [MaxKeySize]byte
-	keyLen  uintptr
-	next    uintptr
+	// key is the key for this entry.
+	key [MaxKeySize]byte
+	// keyLen is the actual length of the key.
+	keyLen uintptr
+	// next is the location in the file of the next entry.
+	next uintptr
+	// dataPtr is location in the file of the data this entry maps to.
 	dataPtr uintptr
+	// dataLen is the length of the data that this entry points to.
 	dataLen uintptr
 }
 
+// File is a binq database file and its supported operations.
+// It should be closed after use.
 type File struct {
 	file *mfile.File
 }
 
+// Open opens a binq database at the given file path. If the database does not exist,
+// a new one is created.
 func Open(path string) (*File, error) {
 	file, err := mfile.Open(path, binqHeaderSize+growBuffer)
 	if err != nil {
@@ -78,6 +98,8 @@ func (b *File) header() *binqHeader {
 	return (*binqHeader)(b.file.DataPtr())
 }
 
+// Put stores a key and value in the database. If the key is
+// already present, it will be overwritten.
 func (b *File) Put(key []byte, value []byte) error {
 	if len(key) > MaxKeySize {
 		return errors.New("key too large")
@@ -88,12 +110,36 @@ func (b *File) Put(key []byte, value []byte) error {
 		return err
 	}
 
+	// Get a fresh header for this action.
+	// The header may be moved around by the Go runtime or OS,
+	// so we need to retrieve it every time.
 	header := b.header()
 
 	prevEntry, prevEntryPtr, equalKey := b.findParent(header, key)
 	// We don't allow entering the same key twice.
 	if equalKey {
-		return errors.New("key already exists")
+		// Overwrite the value if there is room, Otherwise append it.
+		valueLen := uintptr(len(value))
+		var valuePtr uintptr
+
+		// Get the location of our new data.
+		if prevEntry.dataLen <= valueLen {
+			// We can overwrite the value.
+			valuePtr = prevEntry.dataPtr
+		} else {
+			// We must append the data.
+			// We have already reserved the space, so we can start at the end
+			// if the previous value slot isn't large enough.
+			valuePtr = header.eod + 1
+		}
+
+		b.putData(valuePtr, value)
+		valueSyncErr := b.syncValue(valuePtr, valueLen)
+		prevEntry.dataPtr = valuePtr
+		prevEntry.dataLen = valueLen
+		entrySyncErr := b.syncEntry(prevEntryPtr)
+
+		return multiError("error syncing value", valueSyncErr, entrySyncErr)
 	}
 
 	// Get the pointer to the next entry so that we can insert our new entry between prevEntry and
@@ -159,6 +205,10 @@ func (b *File) syncEntryAndData(offset, valueLen uintptr) error {
 	return b.file.SyncRange(int64(offset), int64(binqEntrySize)+int64(valueLen))
 }
 
+func (b *File) syncValue(offset, valueLen uintptr) error {
+	return b.file.SyncRange(int64(offset), int64(valueLen))
+}
+
 func (b *File) syncHeader() error {
 	return b.file.SyncRange(0, int64(binqHeaderSize))
 }
@@ -210,7 +260,7 @@ func (b *File) Get(key []byte) ([]byte, error) {
 		}
 		ptr = entry.next
 	}
-	return nil, errors.New("key not found")
+	return nil, ErrNotFound
 }
 
 // Scan scans the database until it is told to stop.
@@ -246,14 +296,4 @@ func (b *File) ensureSpace(n int) error {
 		return errors.Wrap(err, "unable to grow file")
 	}
 	return nil
-}
-
-func cmpStr(i int) string {
-	if i < 0 {
-		return "<"
-	} else if i == 0 {
-		return "="
-	} else {
-		return ">"
-	}
 }
