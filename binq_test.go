@@ -1,7 +1,6 @@
 package binq
 
 import (
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"strings"
@@ -103,22 +102,27 @@ func TestFile_PutGet_MultiValue(t *testing.T) {
 	assert.Equal(t, value2, got)
 }
 
-func TestMultiError_NoError(t *testing.T) {
-	err := multiError("test")
-	assert.NoError(t, err)
-}
+func TestFile_Scan(t *testing.T) {
 
-func TestMultiError_NilErrors(t *testing.T) {
-	err := multiError("test", nil, nil)
-	assert.NoError(t, err)
-}
+	temp := NewTempFile(t)
+	defer temp.Delete()
 
-func TestMultiError_SingleError(t *testing.T) {
-	err := multiError("test", nil, errors.New("fail"), nil)
-	assert.EqualError(t, err, "test: fail")
-}
+	bq := mustOpenBinq(t, temp.Name())
+	defer mustClose(t, bq)
 
-func TestMultiError_MultipleErrors(t *testing.T) {
-	err := multiError("test", nil, errors.New("fail1"), nil, errors.New("fail2"))
-	assert.EqualError(t, err, "test (multiple errors): fail1, fail2")
+	must(t, bq.Put([]byte("a"), []byte("a")))
+	must(t, bq.Put([]byte("d"), []byte("d")))
+	must(t, bq.Put([]byte("b"), []byte("b")))
+	must(t, bq.Put([]byte("c"), []byte("c")))
+	must(t, bq.Put([]byte("e"), []byte("e")))
+
+	var keys, values []string
+	bq.Scan(func(key, value []byte) (stop bool) {
+		keys = append(keys, string(key))
+		values = append(values, string(value))
+		return false
+	})
+
+	assert.Equal(t, []string{"a", "b", "c", "d", "e"}, keys)
+	assert.Equal(t, []string{"a", "b", "c", "d", "e"}, values)
 }

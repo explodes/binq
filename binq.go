@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"github.com/explodes/mfile"
 	"github.com/pkg/errors"
-	"strings"
 	"unsafe"
 )
 
 const (
-	MaxKeySize = 1024
+	MaxKeySize = 256
 
 	binqHeaderSize = int(unsafe.Sizeof(binqHeader{}))
 	binqEntrySize  = int(unsafe.Sizeof(binqEntry{}))
@@ -17,7 +16,7 @@ const (
 	// growBuffer is how much extra to grow the file when new space is required
 	growBuffer = 10 * (binqEntrySize + 1024)
 
-	magic   = uint32(0x514e4942) // ASCII: BINQ
+	magic   = uint32(0x514e4942) // ASCII: BINQ, little-endian
 	version = 1
 )
 
@@ -34,16 +33,13 @@ type binqHeader struct {
 	// headEntry is the pointer to the last entry in the file.
 	headEntry uintptr
 
-	// tailEntry is the pointer to the last entry in the file.
-	tailEntry uintptr
-
 	// _reserved is an unused block reserved for future use.
 	_reserved [128]byte
 }
 
 type binqEntry struct {
 	key     [MaxKeySize]byte
-	prev    uintptr
+	keyLen  uintptr
 	next    uintptr
 	dataPtr uintptr
 	dataLen uintptr
@@ -94,61 +90,151 @@ func (b *File) Put(key []byte, value []byte) error {
 
 	header := b.header()
 
+	prevEntry, prevEntryPtr, equalKey := b.findParent(header, key)
+	// We don't allow entering the same key twice.
+	if equalKey {
+		return errors.New("key already exists")
+	}
+
+	// Get the pointer to the next entry so that we can insert our new entry between prevEntry and
+	// prevEntry's following entry.
+	var nextEntryPtr uintptr
+	if prevEntry != nil {
+		nextEntryPtr = prevEntry.next
+	}
+
 	// Add our entry to the current end of our data and add the value right after our entry.
-	entryPtr := header.eod
-	valuePtr := header.eod + uintptr(binqEntrySize)
+	entryPtr := header.eod + 1
+	valuePtr := header.eod + 1 + uintptr(binqEntrySize)
 	valueLen := uintptr(len(value))
 	valueEnd := valuePtr + valueLen
 
-	entry := (*binqEntry)(b.file.DataAt(entryPtr))
-	copy(entry.key[:], key)
-	entry.dataPtr = valuePtr
-	entry.dataLen = valueLen
-	entry.prev = header.tailEntry
+	b.putEntry(entryPtr, key, valuePtr, valueLen, nextEntryPtr)
+	b.putData(valuePtr, value)
 
-	valueBuf := b.file.BytesAt(valuePtr, len(value))
-	copy(valueBuf, value)
+	var prevEntrySyncErr error
 
-	var tailEntrySyncErr error
-
-	if header.headEntry != 0 {
-		// This is not our first entry.
-		// Set the tail entry's next pointer to the new entry.
-		prevEntryPtr := header.tailEntry
-		(*binqEntry)(b.file.DataAt(prevEntryPtr)).next = entryPtr
-		tailEntrySyncErr = b.file.SyncRange(int64(prevEntryPtr), int64(binqHeaderSize))
-	} else {
+	if prevEntry == nil {
 		// This is our first entry.
 		// Set our first and last entry pointers to the first entry.
 		header.headEntry = entryPtr
+	} else {
+		// This is not our first entry.
+		// Set the tail entry's next pointer to the new entry.
+		prevEntry.next = entryPtr
+		prevEntrySyncErr = b.syncEntry(prevEntryPtr)
 	}
-	// Point our EOD marker to after the new value.
-	header.tailEntry = entryPtr
-	header.eod = valueEnd + 1
+	// Point our EOD marker to the end of the new data.
+	header.eod = valueEnd
 
 	// Sync our results.
-	headerSyncErr := b.file.SyncRange(0, int64(binqHeaderSize))
-	entrySyncErr := b.file.SyncRange(int64(entryPtr), int64(binqEntrySize)+int64(len(value)))
-	return multiError("failed to sync data", headerSyncErr, tailEntrySyncErr, entrySyncErr)
+	headerSyncErr := b.syncHeader()
+	entrySyncErr := b.syncEntryAndData(entryPtr, valueLen)
+	return multiError("failed to sync data", headerSyncErr, prevEntrySyncErr, entrySyncErr)
 }
 
+// putData writes data to the end of the file and returns the offset to which is written
+// as well as the length of the data that was written.
+func (b *File) putData(offset uintptr, value []byte) {
+	valueBuf := b.file.BytesAt(offset, len(value))
+	copy(valueBuf, value)
+}
+
+// putEntry writes an entry to given position.
+func (b *File) putEntry(offset uintptr, key []byte, valuePtr, valueLen, next uintptr) *binqEntry {
+	entry := (*binqEntry)(b.file.DataAt(offset))
+	copy(entry.key[:], key)
+	entry.keyLen = uintptr(len(key))
+	entry.dataPtr = valuePtr
+	entry.dataLen = valueLen
+	entry.next = next
+	return entry
+}
+
+func (b *File) syncEntry(offset uintptr) error {
+	return b.file.SyncRange(int64(offset), int64(binqEntrySize))
+}
+
+func (b *File) syncEntryAndData(offset, valueLen uintptr) error {
+	return b.file.SyncRange(int64(offset), int64(binqEntrySize)+int64(valueLen))
+}
+
+func (b *File) syncHeader() error {
+	return b.file.SyncRange(0, int64(binqHeaderSize))
+}
+
+// findParent find the parent entry to a key, the entry whose key is the
+// largest lexicographically smaller than the given key.
+func (b *File) findParent(header *binqHeader, key []byte) (entry *binqEntry, offset uintptr, equalKey bool) {
+	var parent *binqEntry
+	var parentPtr uintptr
+
+	ptr := header.headEntry
+	for ptr != 0 {
+		entry := (*binqEntry)(b.file.DataAt(ptr))
+		entryKey := entry.key[:entry.keyLen]
+		cmp := bytes.Compare(key, entryKey)
+		if cmp == 0 {
+			// This entry's key matches.
+			return entry, ptr, true
+		} else if cmp < 0 {
+			// Our new key is less than this entry's key.
+			// The entry prior is the correct parent.
+			return parent, parentPtr, false
+		}
+		// Our previous entry is our current parent candidate.
+		parent = entry
+		parentPtr = ptr
+		// Our new key comes after this entry. Our search continues.
+		// Advance our pointer.
+		ptr = entry.next
+	}
+
+	// We didn't find any entries with a larger key. The last parent is our target.
+	return parent, parentPtr, false
+}
+
+// Get gets the value for a given key.
 func (b *File) Get(key []byte) ([]byte, error) {
 	header := b.header()
 	ptr := header.headEntry
 	for ptr != 0 {
 		entry := (*binqEntry)(b.file.DataAt(ptr))
-		if bytes.Equal(entry.key[:len(key)], key) {
+		entryKey := entry.key[:entry.keyLen]
+		// Keys are sorted. If the current key is larger that our target
+		// key we can stop the search.
+		if cmp := bytes.Compare(entryKey, key); cmp == 0 {
 			return b.file.BytesAt(entry.dataPtr, int(entry.dataLen)), nil
+		} else if cmp > 0 {
+			break
 		}
 		ptr = entry.next
 	}
 	return nil, errors.New("key not found")
 }
 
+// Scan scans the database until it is told to stop.
+func (b *File) Scan(handler func(key, value []byte) (stop bool)) {
+	header := b.header()
+	ptr := header.headEntry
+	for ptr != 0 {
+		entry := (*binqEntry)(b.file.DataAt(ptr))
+		key := entry.key[:entry.keyLen]
+		value := b.file.BytesAt(entry.dataPtr, int(entry.dataLen))
+		if handler(key, value) {
+			break
+		}
+		ptr = entry.next
+	}
+}
+
+// Close closes this file.
 func (b *File) Close() error {
 	return b.file.Close()
 }
 
+// ensureSpace expands the file on disk with room to add new entries and values
+// with an arbitrary additional amount of space to avoid repeatedly expanding the file.
 func (b *File) ensureSpace(n int) error {
 	header := b.header()
 	free := b.file.Len() - int(header.eod)
@@ -162,19 +248,12 @@ func (b *File) ensureSpace(n int) error {
 	return nil
 }
 
-func multiError(msg string, errs ...error) error {
-	nonNilErrors := make([]string, 0, len(errs))
-	for _, err := range errs {
-		if err != nil {
-			nonNilErrors = append(nonNilErrors, err.Error())
-		}
-	}
-	switch len(nonNilErrors) {
-	case 0:
-		return nil
-	case 1:
-		return errors.Errorf("%s: %s", msg, nonNilErrors[0])
-	default:
-		return errors.New(msg + " (multiple errors): " + strings.Join(nonNilErrors, ", "))
+func cmpStr(i int) string {
+	if i < 0 {
+		return "<"
+	} else if i == 0 {
+		return "="
+	} else {
+		return ">"
 	}
 }

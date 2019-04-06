@@ -53,7 +53,12 @@ func mustOpenBinq(t *testing.T, path string) *File {
 
 func mustClose(t *testing.T, c io.Closer) {
 	t.Helper()
-	if err := c.Close(); err != nil {
+	must(t, c.Close())
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
 		t.Fatal(err)
 	}
 }
