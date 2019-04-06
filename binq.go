@@ -213,8 +213,8 @@ func (b *File) syncHeader() error {
 	return b.file.SyncRange(0, int64(binqHeaderSize))
 }
 
-// findParent find the parent entry to a key, the entry whose key is the
-// largest lexicographically smaller than the given key.
+// findParent finds the parent entry to a key, the entry whose key is the
+// largest key lexicographically smaller than the given key.
 func (b *File) findParent(header *binqHeader, key []byte) (entry *binqEntry, offset uintptr, equalKey bool) {
 	var parent *binqEntry
 	var parentPtr uintptr
