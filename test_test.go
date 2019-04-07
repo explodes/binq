@@ -32,7 +32,7 @@ func NewTempFile(t testType) *TempFile {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileName := hex.EncodeToString(randBuf)
+	fileName := "binq_test_" + hex.EncodeToString(randBuf)
 	filePath := path.Join(os.TempDir(), fileName)
 	return &TempFile{
 		t:    t,
