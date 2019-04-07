@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"testing"
 	"time"
 )
 
@@ -16,11 +15,17 @@ const (
 )
 
 type TempFile struct {
-	t    *testing.T
+	t    testType
 	name string
 }
 
-func NewTempFile(t *testing.T) *TempFile {
+type testType interface {
+	Helper()
+	Fatal(args ...interface{})
+	Error(args ...interface{})
+}
+
+func NewTempFile(t testType) *TempFile {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	randBuf := make([]byte, 64)
 	_, err := rng.Read(randBuf)
@@ -47,7 +52,7 @@ func (t *TempFile) Delete() {
 	}
 }
 
-func mustOpenBinq(t *testing.T, path string) *File {
+func mustOpenBinq(t testType, path string) *File {
 	t.Helper()
 	bq, err := Open(path)
 	if err != nil {
@@ -56,12 +61,12 @@ func mustOpenBinq(t *testing.T, path string) *File {
 	return bq
 }
 
-func mustClose(t *testing.T, c io.Closer) {
+func mustClose(t testType, c io.Closer) {
 	t.Helper()
 	must(t, c.Close())
 }
 
-func must(t *testing.T, err error) {
+func must(t testType, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
