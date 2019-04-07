@@ -116,7 +116,10 @@ func (b *File) Put(ctx context.Context, key []byte, value []byte) error {
 	// so we need to retrieve it every time.
 	header := b.header()
 
-	prevEntry, prevEntryPtr, equalKey := b.findParent(header, key)
+	prevEntry, prevEntryPtr, equalKey, err := b.findParent(ctx, header, key)
+	if err != nil {
+		return errors.Wrap(err, "unable to put value")
+	}
 	// We don't allow entering the same key twice.
 	if equalKey {
 		// Overwrite the value if there is room, Otherwise append it.
@@ -216,22 +219,25 @@ func (b *File) syncHeader() error {
 
 // findParent finds the parent entry to a key, the entry whose key is the
 // largest key lexicographically smaller than the given key.
-func (b *File) findParent(header *binqHeader, key []byte) (entry *binqEntry, offset uintptr, equalKey bool) {
+func (b *File) findParent(ctx context.Context, header *binqHeader, key []byte) (entry *binqEntry, offset uintptr, equalKey bool, err error) {
 	var parent *binqEntry
 	var parentPtr uintptr
 
 	ptr := header.headEntry
 	for ptr != 0 {
+		if isDone(ctx) {
+			return nil, 0, false, ctx.Err()
+		}
 		entry := (*binqEntry)(b.file.DataAt(ptr))
 		entryKey := entry.key[:entry.keyLen]
 		cmp := bytes.Compare(key, entryKey)
 		if cmp == 0 {
 			// This entry's key matches.
-			return entry, ptr, true
+			return entry, ptr, true, nil
 		} else if cmp < 0 {
 			// Our new key is less than this entry's key.
 			// The entry prior is the correct parent.
-			return parent, parentPtr, false
+			return parent, parentPtr, false, nil
 		}
 		// Our previous entry is our current parent candidate.
 		parent = entry
@@ -242,7 +248,7 @@ func (b *File) findParent(header *binqHeader, key []byte) (entry *binqEntry, off
 	}
 
 	// We didn't find any entries with a larger key. The last parent is our target.
-	return parent, parentPtr, false
+	return parent, parentPtr, false, nil
 }
 
 // Get gets the value for a given key.
@@ -250,6 +256,9 @@ func (b *File) Get(ctx context.Context, key []byte) ([]byte, error) {
 	header := b.header()
 	ptr := header.headEntry
 	for ptr != 0 {
+		if isDone(ctx) {
+			return nil, ctx.Err()
+		}
 		entry := (*binqEntry)(b.file.DataAt(ptr))
 		entryKey := entry.key[:entry.keyLen]
 		// Keys are sorted. If the current key is larger that our target
@@ -265,10 +274,13 @@ func (b *File) Get(ctx context.Context, key []byte) ([]byte, error) {
 }
 
 // Scan scans the database until it is told to stop.
-func (b *File) Scan(ctx context.Context, handler func(key, value []byte) (stop bool)) {
+func (b *File) Scan(ctx context.Context, handler func(key, value []byte) (stop bool)) error {
 	header := b.header()
 	ptr := header.headEntry
 	for ptr != 0 {
+		if isDone(ctx) {
+			return ctx.Err()
+		}
 		entry := (*binqEntry)(b.file.DataAt(ptr))
 		key := entry.key[:entry.keyLen]
 		value := b.file.BytesAt(entry.dataPtr, int(entry.dataLen))
@@ -277,6 +289,7 @@ func (b *File) Scan(ctx context.Context, handler func(key, value []byte) (stop b
 		}
 		ptr = entry.next
 	}
+	return nil
 }
 
 // Close closes this file.
@@ -297,4 +310,13 @@ func (b *File) ensureSpace(n int) error {
 		return errors.Wrap(err, "unable to grow file")
 	}
 	return nil
+}
+
+func isDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
 }

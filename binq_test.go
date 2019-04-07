@@ -207,12 +207,12 @@ func TestFile_Scan(t *testing.T) {
 	must(t, bq.Put(testContext(), []byte("e"), []byte("e")))
 
 	var keys, values []string
-	bq.Scan(testContext(), func(key, value []byte) (stop bool) {
+	err := bq.Scan(testContext(), func(key, value []byte) (stop bool) {
 		keys = append(keys, string(key))
 		values = append(values, string(value))
 		return false
 	})
-
+	assert.NoError(t, err)
 	assert.Equal(t, []string{"a", "b", "c", "d", "e"}, keys)
 	assert.Equal(t, []string{"a", "b", "c", "d", "e"}, values)
 }
