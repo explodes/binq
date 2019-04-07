@@ -1,6 +1,7 @@
 package binq
 
 import (
+	"context"
 	"encoding/hex"
 	"io"
 	"math/rand"
@@ -8,6 +9,10 @@ import (
 	"path"
 	"testing"
 	"time"
+)
+
+const (
+	testContextTimeout = 10 * time.Second
 )
 
 type TempFile struct {
@@ -61,4 +66,9 @@ func must(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testContext() context.Context {
+	ctx, _ := context.WithTimeout(context.Background(), testContextTimeout)
+	return ctx
 }

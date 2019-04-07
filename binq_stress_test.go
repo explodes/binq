@@ -41,11 +41,11 @@ func stressTest(t *testing.T, iterations, valueSize int) {
 	var key []byte
 	for i := 0; i <= iterations; i++ {
 		key = []byte(strconv.Itoa(i))
-		err := bq.Put(key, value)
+		err := bq.Put(testContext(), key, value)
 		assert.NoError(t, err)
 	}
 
-	got, err := bq.Get(key)
+	got, err := bq.Get(testContext(), key)
 	assert.NoError(t, err)
 	assert.Equal(t, value, got)
 }

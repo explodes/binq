@@ -2,6 +2,7 @@ package binq
 
 import (
 	"bytes"
+	"context"
 	"github.com/explodes/mfile"
 	"github.com/pkg/errors"
 	"unsafe"
@@ -100,7 +101,7 @@ func (b *File) header() *binqHeader {
 
 // Put stores a key and value in the database. If the key is
 // already present, it will be overwritten.
-func (b *File) Put(key []byte, value []byte) error {
+func (b *File) Put(ctx context.Context, key []byte, value []byte) error {
 	if len(key) > MaxKeySize {
 		return errors.New("key too large")
 	}
@@ -245,7 +246,7 @@ func (b *File) findParent(header *binqHeader, key []byte) (entry *binqEntry, off
 }
 
 // Get gets the value for a given key.
-func (b *File) Get(key []byte) ([]byte, error) {
+func (b *File) Get(ctx context.Context, key []byte) ([]byte, error) {
 	header := b.header()
 	ptr := header.headEntry
 	for ptr != 0 {
@@ -264,7 +265,7 @@ func (b *File) Get(key []byte) ([]byte, error) {
 }
 
 // Scan scans the database until it is told to stop.
-func (b *File) Scan(handler func(key, value []byte) (stop bool)) {
+func (b *File) Scan(ctx context.Context, handler func(key, value []byte) (stop bool)) {
 	header := b.header()
 	ptr := header.headEntry
 	for ptr != 0 {
