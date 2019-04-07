@@ -70,6 +70,7 @@ type File struct {
 
 // Open opens a binq database at the given file path. If the database does not exist,
 // a new one is created.
+// The files contents are not portable.
 func Open(path string) (*File, error) {
 	file, err := mfile.Open(path, binqHeaderSize+growBuffer)
 	if err != nil {
@@ -88,6 +89,8 @@ func Open(path string) (*File, error) {
 	} else if header.magic != magic {
 		// If the magic number is not 0 and not the right
 		// number, this isn't the right kind of file.
+		// This magic number test will also fail if the file is moved from a little-endian machine
+		// to a big-endian machine, which is good because binq files are not portable.
 		return nil, errors.New("invalid file: mismatched magic number")
 	}
 	return bf, nil
