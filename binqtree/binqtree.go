@@ -2,6 +2,15 @@
 
 package binqtree
 
+import (
+	"bytes"
+	"github.com/pkg/errors"
+)
+
+const (
+	MinMinDegree = 3
+)
+
 type KeyType []byte
 
 // BTree is an implementation of a B-Tree designed to work with mfile.File.
@@ -20,11 +29,15 @@ type BTree struct {
 	minDegree int
 }
 
-func New(minDegree int) *BTree {
-	return &BTree{
+func New(minDegree int) (*BTree, error) {
+	if minDegree < MinMinDegree {
+		return nil, errors.New("minDegree is too small")
+	}
+	b := &BTree{
 		root:      nil,
 		minDegree: minDegree,
 	}
+	return b, nil
 }
 
 // Traverse traverses this tree until the stop condition is met.
@@ -117,19 +130,11 @@ func newBTreeEntry(key KeyType) *bTreeEntry {
 }
 
 func (b *bTreeEntry) compare(other KeyType) int {
-	if b.key < other {
-		return -1
-	}
-	if b.key > other {
-		return 1
-	}
-	return 0
-	//	return bytes.Compare(b.key, other)
+	return bytes.Compare(b.key, other)
 }
 
 func (b *bTreeEntry) equals(other KeyType) bool {
-	return b.key == other
-	//return bytes.Equal(b.key, other)
+	return bytes.Equal(b.key, other)
 }
 
 type bTreeNode struct {
@@ -190,7 +195,7 @@ func (b *bTreeNode) search(key KeyType) *bTreeEntry {
 	}
 
 	// If the found key is equal to the input key, return this node.
-	if cmp == 0 {
+	if i < N && cmp == 0 {
 		return b.keys[i]
 	}
 
