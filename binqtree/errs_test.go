@@ -1,4 +1,4 @@
-package db2
+package binqtree
 
 import (
 	"github.com/pkg/errors"
