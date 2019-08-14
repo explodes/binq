@@ -224,7 +224,7 @@ func (t *Table) updateBranchNodeKey(branch *branchNode, pageNum PagePointer, old
 	return nil
 }
 
-// Add a new child/key pair to the parent that corresponds to child
+// branchNodeInsert adds a new child/key pair to the parent that corresponds to child.
 func (t *Table) branchNodeInsert(parentBranch *branchNode, parentPageNum PagePointer, childLeaf *leafNode, childPageNum PagePointer) error {
 	childMaxKey := childLeaf.getMaxKey(t)
 
@@ -273,10 +273,12 @@ func (t *Table) branchNodeInsert(parentBranch *branchNode, parentPageNum PagePoi
 	return nil
 }
 
+// printTree prints out the basic structure of the tree contained in this table.
 func (t *Table) printTree() {
 	t.printTreeHelper(t.rootPageNum, 0)
 }
 
+// printTreeHelper is the recursive utility for printing the tree contained in this table.
 func (t *Table) printTreeHelper(pageNum PagePointer, indentationLevel int) {
 	page, err := t.pager.GetPage(pageNum)
 	if err != nil {
@@ -305,6 +307,7 @@ func (t *Table) printTreeHelper(pageNum PagePointer, indentationLevel int) {
 	}
 }
 
+// printIndent prints an indentation with a given size.
 func (t *Table) printIndent(indentationLevel int) {
 	for i := 0; i < indentationLevel; i++ {
 		fmt.Print(" ")

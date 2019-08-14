@@ -1,0 +1,126 @@
+# u64le0_eq_su64100
+# Decoded u64le at position 0 is equal to scalar u64 value of 100.
+predicates {
+  expression {
+    binary_operation {
+      left {
+        value {
+          jump {
+            offset: 0
+          }
+          type: VALUE_TYPE_U64LE
+        }
+      }
+      binary_op_code: BINARY_OP_CODE_EQ
+      right {
+        scalar {
+          u64: 100
+        }
+      }
+    }
+  }
+}
+
+# u32le0_lt_u84
+# Decoded u32le at position 0 is less than u8 at position 4.
+predicates {
+  expression {
+    binary_operation {
+      left {
+        value {
+          jump {
+            offset: 0
+          }
+          type: VALUE_TYPE_U32LE
+        }
+      }
+      binary_op_code: BINARY_OP_CODE_LESS
+      right {
+        value {
+          jump {
+            offset: 4
+          }
+          type: VALUE_TYPE_U8
+        }
+      }
+    }
+  }
+}
+
+# u64le0_lte_u16be8
+# Decoded u64le at position 0 is less than or equal to u16be at position 8.
+predicates {
+  expression {
+    binary_operation {
+      left {
+        value {
+          jump {
+            offset: 0
+          }
+          type: VALUE_TYPE_U64LE
+        }
+      }
+      binary_op_code: BINARY_OP_CODE_LESS_EQ
+      right {
+        value {
+          jump {
+            offset: 8
+          }
+          type: VALUE_TYPE_U16BE
+        }
+      }
+    }
+  }
+}
+
+# u64le0_gt_u16be8
+# Decoded u64le at position 0 is greater than u16be at position 8.
+predicates {
+  expression {
+    binary_operation {
+      left {
+        value {
+          jump {
+            offset: 0
+          }
+          type: VALUE_TYPE_U64LE
+        }
+      }
+      binary_op_code: BINARY_OP_CODE_GREATER
+      right {
+        value {
+          jump {
+            offset: 8
+          }
+          type: VALUE_TYPE_U16BE
+        }
+      }
+    }
+  }
+}
+
+# u64le0_gte_u16be8
+# Decoded u64le at position 0 is greater than or equal to u16be at position 8.
+predicates {
+  expression {
+    binary_operation {
+      left {
+        value {
+          jump {
+            offset: 0
+          }
+          type: VALUE_TYPE_U64LE
+        }
+      }
+      binary_op_code: BINARY_OP_CODE_GREATER_EQ
+      right {
+        value {
+          jump {
+            offset: 8
+          }
+          type: VALUE_TYPE_U16BE
+        }
+      }
+    }
+  }
+}

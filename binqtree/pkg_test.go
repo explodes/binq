@@ -137,7 +137,8 @@ func testWithTable(t *testing.T, tableDataSize uint16, f func(t *testing.T, tabl
 
 const (
 	cstackRowSize     = 4 + 32 + 255
-	sentinelPadSize   = cstackRowSize - unsafe.Sizeof(sentinelHeader{})
+	// TODO: remove debug code
+	sentinelPadSize   = 100//cstackRowSize - unsafe.Sizeof(sentinelHeader{})
 	sentinelValueSize = unsafe.Sizeof(sentinelValue{})
 )
 

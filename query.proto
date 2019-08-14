@@ -1,0 +1,177 @@
+syntax = "proto3";
+
+option go_package = "binq";
+
+import "third_party/google/protobuf/descriptor.proto";
+
+// ReturnType indicates the data type returned from evaluating an expression.
+enum ReturnType {
+  RETURN_TYPE_UNKNOWN = 0;
+  RETURN_TYPE_BOOL = 1;
+  RETURN_TYPE_U64 = 2;
+  RETURN_TYPE_U32 = 3;
+  RETURN_TYPE_U16 = 4;
+  RETURN_TYPE_U8 = 5;
+}
+
+enum Endianness {
+  ENDIANNESS_UNKNOWN = 0;
+  ENDIANNESS_LITTLE = 1;
+  ENDIANNESS_BIG = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  ReturnType return_type = 1001;
+  Endianness endianness = 1002;
+}
+
+extend google.protobuf.EnumValueOptions {
+  ReturnType enum_return_type = 1001;
+  Endianness enum_endianness = 1002;
+}
+
+// Query is a query to execute over a range of binary key-value data.
+message Query {
+  // start is the minimum key to search, inclusive.
+  bytes start = 1;
+
+  // end is the maximum key to search, exclusive.
+  bytes end = 2;
+
+  // query_options are additional options for this query.
+  Options query_options = 3;
+
+  // predicate is the filter to apply to each record.
+  Predicate predicate = 4;
+}
+
+// Options specifies additional options for a query.
+message Options {
+  // limit determines the maximum number of results.
+  // A missing value, or 0, indicates no limit.
+  uint64 limit = 1;
+}
+
+// Predicate defines a set of expressions to apply to the values of key-value binary data.
+// A predicates root expression must represent a boolean value.
+message Predicate {
+  oneof predicate {
+    // expression indicates a filter with a single expression.
+    Expression expression = 1 [(return_type) = RETURN_TYPE_BOOL];
+
+    // any indicates that this filter must match any filter.
+    Expressions any = 2 [(return_type) = RETURN_TYPE_BOOL];
+
+    // all indicates that this filter must match all filters.
+    Expressions all = 3 [(return_type) = RETURN_TYPE_BOOL];
+  }
+}
+
+// Value represent a node in an expression tree.
+message Expression {
+  oneof expression {
+    // binary_operation represents a nested operation for this expression.
+    BinaryOperation binary_operation = 1;
+
+    // value is a value contained within binary data.
+    Value value = 2;
+
+    // right_constant is a constant value for the right hand side.
+    Scalar scalar = 3;
+  }
+}
+
+// Expressions is a container for multiple expressions.
+message Expressions {
+  repeated Expression expressions = 1;
+}
+
+// Predicates is a container for multiple predicates.
+message Predicates {
+  repeated Predicate predicates = 1;
+}
+
+// Scalar represents a constant value.
+message Scalar {
+  oneof value {
+    bool bool = 1 [(return_type) = RETURN_TYPE_BOOL];
+    uint64 u64 = 3 [(return_type) = RETURN_TYPE_U64];
+    uint32 u32 = 4 [(return_type) = RETURN_TYPE_U32];
+  }
+}
+
+// BinaryOperation is an operation performed between two expressions.
+message BinaryOperation {
+  // left is the left-hand side of the expression.
+  Expression left = 1;
+
+  // binary_op_code is the operation to perform on the left and right hand sides.
+  BinaryOpCode binary_op_code = 2;
+
+  // right is the right-hand side of the expression.
+  Expression right = 3;
+}
+
+// Op is an operation to perform between two expressions.
+enum BinaryOpCode {
+  BINARY_OP_CODE_UNKNOWN = 0 [(enum_return_type) = RETURN_TYPE_UNKNOWN];
+  BINARY_OP_CODE_EQ = 1 [(enum_return_type) = RETURN_TYPE_BOOL];
+  BINARY_OP_CODE_NEQ = 2 [(enum_return_type) = RETURN_TYPE_BOOL];
+  BINARY_OP_CODE_LESS = 3 [(enum_return_type) = RETURN_TYPE_BOOL];
+  BINARY_OP_CODE_LESS_EQ = 4 [(enum_return_type) = RETURN_TYPE_BOOL];
+  BINARY_OP_CODE_GREATER = 5 [(enum_return_type) = RETURN_TYPE_BOOL];
+  BINARY_OP_CODE_GREATER_EQ = 6 [(enum_return_type) = RETURN_TYPE_BOOL];
+}
+
+// Value is a value contained with binary data.
+message Value {
+  // Jump indicates the position of the data for this expression.
+  Jump jump = 1;
+
+  // type is the type of data pointed to.
+  ValueType type = 2;
+}
+
+enum ValueType {
+  VALUE_TYPE_UNKNOWN = 0 [(enum_return_type) = RETURN_TYPE_UNKNOWN];
+  VALUE_TYPE_U64LE = 1 [(enum_return_type) = RETURN_TYPE_U64, (enum_endianness) = ENDIANNESS_LITTLE];
+  VALUE_TYPE_U64BE = 2 [(enum_return_type) = RETURN_TYPE_U64, (enum_endianness) = ENDIANNESS_BIG];
+  VALUE_TYPE_U32LE = 3 [(enum_return_type) = RETURN_TYPE_U32, (enum_endianness) = ENDIANNESS_LITTLE];
+  VALUE_TYPE_U32BE = 4 [(enum_return_type) = RETURN_TYPE_U32, (enum_endianness) = ENDIANNESS_BIG];
+  VALUE_TYPE_U16LE = 5 [(enum_return_type) = RETURN_TYPE_U16, (enum_endianness) = ENDIANNESS_LITTLE];
+  VALUE_TYPE_U16BE = 6 [(enum_return_type) = RETURN_TYPE_U16, (enum_endianness) = ENDIANNESS_BIG];
+  VALUE_TYPE_U8 = 7 [(enum_return_type) = RETURN_TYPE_U8];
+}
+
+// Jump defines a tree of jump-style lookups on data.
+// ex:
+//  Jump{offset:8} means that the position of the data is at position 8.
+//  Jump{u64:8} means that the position of the data is at the u64 value decoded at position 8.
+message Jump {
+  // jump defines what kind of jump to perform.
+  oneof jump {
+    // offset sets an exact point to jump to.
+    uint64 offset = 1;
+
+    // u64le dereferences a little-endian uint64 jump address at the given offset.
+    uint64 u64le = 2;
+
+    // u64le dereferences a big-endian uint64 jump address at the given offset.
+    uint64 u64be = 3;
+
+    // u32le dereferences a little-endian uint32 jump address at the given offset.
+    uint64 u32le = 4;
+
+    // u32be dereferences a big-endian uint32 jump address at the given offset.
+    uint64 u32be = 5;
+
+    // u16le dereferences a little-endian uint16 jump address at the given offset.
+    uint64 u16le = 6;
+
+    // u16be dereferences a big-endian uint16 jump address at the given offset.
+    uint64 u16be = 7;
+
+    // u8 dereferences a uint8 jump address at the given offset.
+    uint64 u8 = 8;
+  }
+}

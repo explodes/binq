@@ -11,7 +11,8 @@ import (
 const (
 	// branchNodeMaxCells is the maximum amount of branchNodeCells that
 	// can fit in a branchNode while also fitting in a single page.
-	branchNodeMaxCells = (PageSize - unsafe.Sizeof(branchNodeHeader{})) / unsafe.Sizeof(branchNodeCell{})
+	// TODO: remove debug code
+	branchNodeMaxCells = 3 //(PageSize - unsafe.Sizeof(branchNodeHeader{})) / unsafe.Sizeof(branchNodeCell{})
 
 	// leafNodeMaxCellData is the amount of data in a leafNode
 	// reserved for key-value pairs.
@@ -51,16 +52,6 @@ func encodeKeyToBytes(key KeyType, b []byte) {
 	binary.LittleEndian.PutUint32(b, uint32(key))
 }
 
-// getPageMaxKey returns the highest key contain in a Page's cells.
-func getPageMaxKey(sizer DataSizer, page *Page) KeyType {
-	n := pageToNodeHeader(page)
-	if n.isLeaf {
-		return pageToLeafNode(page).getMaxKey(sizer)
-	} else {
-		return pageToBranchNode(page).getMaxKey()
-	}
-}
-
 // nodeHeader is the header common to leaf and branch nodes.
 type nodeHeader struct {
 	// isLeaf indicates if this node is a leaf or not.
@@ -74,6 +65,14 @@ type nodeHeader struct {
 // pageToNodeHeader converts a page to a nodeHeader.
 func pageToNodeHeader(page *Page) *nodeHeader {
 	return (*nodeHeader)(unsafe.Pointer(&page[0]))
+}
+
+func (n *nodeHeader) getMaxKey(sizer DataSizer) KeyType {
+	if n.isLeaf {
+		return (*leafNode)(unsafe.Pointer(n)).getMaxKey(sizer)
+	} else {
+		return (*branchNode)(unsafe.Pointer(n)).getMaxKey()
+	}
 }
 
 func (n *nodeHeader) String() string {
@@ -440,8 +439,21 @@ func (n *leafNode) splitAndInsert(cursor *Cursor, key KeyType, value []byte) err
 		}
 		parentBranch := pageToBranchNode(parentPage)
 		if parentBranch.numCells+1 >= cellptr(branchNodeMaxCells) {
+			fmt.Println("root split")
 			// TODO: implement splitting branch node
-			return errors.New("need to implement splitting branch node")
+			left, leftNum, right, rightNum, err := parentBranch.split(cursor)
+			if err != nil {
+				return wrap(err, "unable to split internal node")
+			}
+			if left.getMaxKey() >= newMax {
+				parentBranch = left
+				parentPageNum = leftNum
+			} else {
+				parentBranch = right
+				parentPageNum = rightNum
+			}
+		} else {
+			fmt.Println("no root split")
 		}
 		if err := table.updateBranchNodeKey(parentBranch, parentPageNum, oldMax, newMax); err != nil {
 			return wrap(err, "unable to update node key")
@@ -451,4 +463,108 @@ func (n *leafNode) splitAndInsert(cursor *Cursor, key KeyType, value []byte) err
 		}
 		return nil
 	}
+}
+
+func (n *branchNode) split(cursor *Cursor) (left *branchNode, leftNum PagePointer, right *branchNode, rightNum PagePointer, err error) {
+	if n.isRoot {
+		return n.splitRoot(cursor)
+	} else {
+		return n.splitNonRoot()
+	}
+}
+
+func (n *branchNode) splitRoot(cursor *Cursor) (left *branchNode, leftNum PagePointer, right *branchNode, rightNum PagePointer, err error) {
+	table := cursor.table
+	pager := table.pager
+
+	leftSplitCount := cellptr(branchNodeMaxCells+1) / 2
+	rightSplitCount := cellptr(branchNodeMaxCells+1) - leftSplitCount
+
+	// Handle splitting the root.
+	// Old root copied to new page becomes left child.
+	// Re-init root page to contain the new root node.
+	// New root node points to two children.
+
+	// Get our root branch node.
+	rootBranch := n
+	// This node may/may not be a branch currently.
+	// We initialize it as a branch later.
+	// But first we need to copy its state into the leftChild.
+
+	// Get our right child page.
+	rightBranchPageNum, err := pager.GetUnusedPageNum()
+	if err != nil {
+		return nil, 0, nil, 0, wrap(err, "unable to get free page")
+	}
+	rightChild, err := pager.GetPage(rightBranchPageNum)
+	if err != nil {
+		return nil, 0, nil, 0, wrap(err, "unable to get page")
+	}
+	rightBranch := pageToBranchNode(rightChild)
+
+	// Get our left child page.
+	leftBranchPageNum, err := pager.GetUnusedPageNum()
+	if err != nil {
+		return nil, 0, nil, 0, wrap(err, "unable to get free page")
+	}
+	leftChild, err := pager.GetPage(leftBranchPageNum)
+	if err != nil {
+		return nil, 0, nil, 0, wrap(err, "unable to get page")
+	}
+	leftBranch := pageToBranchNode(leftChild)
+
+	// Update the left child.
+	// Left child has data copied from old root
+	copy(leftChild[:], (*Page)(unsafe.Pointer(rootBranch))[:])
+	leftBranch.isRoot = false
+	leftBranch.parentPointer = table.rootPageNum
+	leftBranch.numCells = leftSplitCount
+
+	// Update the root.
+	rootBranch.isRoot = true
+	rootBranch.numCells = 1
+	// Direct access to child pointers is fine because the
+	// child to modify is actually contained on this branch (numCells==1).
+	rootBranch.cells[0].child = leftBranchPageNum
+	rootBranch.cells[0].key = leftBranch.getMaxKey()
+	rootBranch.rightChild = rightBranchPageNum
+
+	// Update the right child.
+	rightBranch.isRoot = false
+	rightBranch.parentPointer = table.rootPageNum
+	copy(rightBranch.cells[:], rootBranch.cells[rightSplitCount:])
+
+	// Sync our changes.
+	if err := pager.sync3(table.rootPageNum, leftBranchPageNum, rightBranchPageNum); err != nil {
+		return nil, 0, nil, 0, wrap(err, "unable to sync new root")
+	}
+	// Update node parenting.
+	if err := leftBranch.reparentChildren(pager, leftBranchPageNum); err != nil {
+		return nil, 0, nil, 0, wrap(err, "unable to update parents of split children")
+	}
+	if err := rightBranch.reparentChildren(pager, rightBranchPageNum); err != nil {
+		return nil, 0, nil, 0, wrap(err, "unable to update parents of split children")
+	}
+	return leftBranch, leftBranchPageNum, rightBranch, rightBranchPageNum, nil
+
+}
+
+func (n *branchNode) reparentChildren(pager *Pager, parent PagePointer) error {
+	for i := cellptr(0); i < n.numCells; i++ {
+		pageNum := n.cells[i].child
+		page, err := pager.GetPage(pageNum)
+		if err != nil {
+			return wrap(err, "unable to get page")
+		}
+		node := pageToNodeHeader(page)
+		node.parentPointer = parent
+		if err := pager.sync1(pageNum); err != nil {
+			return wrap(err, "unable to sync child")
+		}
+	}
+	return nil
+}
+
+func (n *branchNode) splitNonRoot() (left *branchNode, leftNum PagePointer, right *branchNode, rightNum PagePointer, err error) {
+	return nil, 0, nil, 0, errors.New("need to implement splitting non root branch node")
 }
